@@ -176,8 +176,8 @@ class Conv2D(Module):
         
         out = Tensor(out_data, (x, self.weight), 'conv2d')
         
-        # Store variables for backward pass
-        out._conv_cache = {
+        # Capture variables in closure for backward pass
+        conv_cache = {
             'x_padded': x_padded,
             'col': col,
             'weight_col': weight_col,
@@ -187,7 +187,8 @@ class Conv2D(Module):
         }
         
         def _backward():
-            cache = out._conv_cache
+            # Use cached values from closure
+            cache = conv_cache
             
             # Gradient w.r.t. output: (batch, out_channels, out_h, out_w)
             dout = out.grad
