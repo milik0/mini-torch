@@ -1,0 +1,29 @@
+[project]
+name = "mini-torch"
+version = "0.1.0"
+description = "A minimal PyTorch-like library built from scratch with NumPy"
+authors = [
+    {name = "PRDI Project"}
+]
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "numpy>=1.20.0",
+    "matplotlib>=3.3.0",
+    "scikit-learn>=0.24.0",
+    "pandas>=1.3.0",
+    "jupyter>=1.0.0",
+    "notebook>=6.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ipython>=7.20.0",
+]
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["mini_torch"]
