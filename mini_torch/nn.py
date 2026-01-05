@@ -274,15 +274,6 @@ class Conv2D(Module):
 
 
 class BatchNorm2D(Module):
-    """
-    Batch Normalization for 2D inputs (images).
-    
-    Args:
-        num_features: Number of channels (C from input shape (N, C, H, W))
-        eps: Small constant for numerical stability
-        momentum: Momentum for running mean/variance
-    """
-    
     def __init__(self, num_features, eps=1e-5, momentum=0.1):
         super().__init__()
         self.num_features = num_features
@@ -290,59 +281,79 @@ class BatchNorm2D(Module):
         self.momentum = momentum
         
         # Learnable parameters
-        self.gamma = Tensor(np.ones(num_features, dtype=np.float32))  # Scale
-        self.beta = Tensor(np.zeros(num_features, dtype=np.float32))  # Shift
+        self.gamma = Tensor(np.ones((1, num_features, 1, 1), dtype=np.float32))
+        self.beta = Tensor(np.zeros((1, num_features, 1, 1), dtype=np.float32))
         
-        # Running statistics (not trainable)
-        self.running_mean = np.zeros(num_features, dtype=np.float32)
-        self.running_var = np.ones(num_features, dtype=np.float32)
+        # Running statistics
+        self.running_mean = np.zeros((1, num_features, 1, 1), dtype=np.float32)
+        self.running_var = np.ones((1, num_features, 1, 1), dtype=np.float32)
         
         self._parameters = [self.gamma, self.beta]
     
     def forward(self, x):
-        """
-        Forward pass for BatchNorm2D.
-        
-        Args:
-            x: Input tensor of shape (batch_size, num_features, height, width)
-        """
-        if not isinstance(x, Tensor):
-            x = Tensor(x)
-        
-        batch_size, num_features, h, w = x.shape
+        if not isinstance(x, Tensor): x = Tensor(x)
         
         if self._training:
-            # Calculate batch statistics
-            # Mean and var over batch, height, width dimensions
-            mean = x.data.mean(axis=(0, 2, 3), keepdims=False)  # (num_features,)
-            var = x.data.var(axis=(0, 2, 3), keepdims=False)   # (num_features,)
+            # Calculate mean/var keeping dims for broadcasting
+            mean = x.data.mean(axis=(0, 2, 3), keepdims=True)
+            var = x.data.var(axis=(0, 2, 3), keepdims=True)
             
-            # Update running statistics
+            # Update running stats
             self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * mean
             self.running_var = (1 - self.momentum) * self.running_var + self.momentum * var
+            
+            # Use batch stats for normalization
+            curr_mean = mean
+            curr_var = var
         else:
-            # Use running statistics
-            mean = self.running_mean
-            var = self.running_var
+            curr_mean = self.running_mean
+            curr_var = self.running_var
+
+        # Normalize
+        # We manually implement the backward pass for the normalization logic
+        # to ensure gradients propagate through the mean and variance correctly.
         
-        # Normalize: reshape for broadcasting (1, C, 1, 1)
-        mean_reshaped = mean.reshape(1, num_features, 1, 1)
-        var_reshaped = var.reshape(1, num_features, 1, 1)
+        x_centered = x.data - curr_mean
+        std_inv = 1.0 / np.sqrt(curr_var + self.eps)
+        x_norm_data = x_centered * std_inv
         
-        # Standardize
-        x_centered = x - Tensor(mean_reshaped, requires_grad=False)
-        std = Tensor(np.sqrt(var_reshaped + self.eps), requires_grad=False)
-        x_norm = x_centered / std
+        out_data = self.gamma.data * x_norm_data + self.beta.data
+        out = Tensor(out_data, (x, self.gamma, self.beta), 'batchnorm')
         
-        # Scale and shift
-        gamma_reshaped = self.gamma.reshape(1, num_features, 1, 1)
-        beta_reshaped = self.beta.reshape(1, num_features, 1, 1)
-        
-        out = gamma_reshaped * x_norm + beta_reshaped
-        
+        def _backward():
+            N, C, H, W = x.shape
+            dout = out.grad
+            
+            # Gradients for gamma and beta
+            if self.gamma.requires_grad:
+                self.gamma.grad += (dout * x_norm_data).sum(axis=(0, 2, 3), keepdims=True)
+            if self.beta.requires_grad:
+                self.beta.grad += dout.sum(axis=(0, 2, 3), keepdims=True)
+            
+            # Gradient for input x (only complex part if training)
+            if x.requires_grad:
+                dx_norm = dout * self.gamma.data
+                if self._training:
+                    # Logic for batch norm backward (paper derivation)
+                    # dx = (1/N*std) * (N*dx_norm - sum(dx_norm) - x_norm * sum(dx_norm * x_norm))
+                    M = N * H * W
+                    dvar = (dx_norm * x_centered * -0.5 * std_inv**3).sum(axis=(0, 2, 3), keepdims=True)
+                    dmean = (dx_norm * -std_inv).sum(axis=(0, 2, 3), keepdims=True) + \
+                            dvar * (-2.0 * x_centered).mean(axis=(0, 2, 3), keepdims=True) * 2 # simplified
+                    
+                    # Alternative stable formula:
+                    sum_dx_norm = dx_norm.sum(axis=(0, 2, 3), keepdims=True)
+                    sum_dx_norm_x = (dx_norm * x_norm_data).sum(axis=(0, 2, 3), keepdims=True)
+                    
+                    dx = std_inv * (dx_norm - (sum_dx_norm + x_norm_data * sum_dx_norm_x) / M)
+                else:
+                    # During eval, mean/var are fixed constants
+                    dx = dx_norm * std_inv
+                
+                x.grad += dx
+
+        out._backward = _backward
         return out
-
-
 class LayerNorm(Module):
     """
     Layer Normalization.
