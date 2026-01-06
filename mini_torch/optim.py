@@ -42,15 +42,6 @@ class SGD(Optimizer):
 
 
 class Momentum(Optimizer):
-    """
-    SGD with Momentum optimizer.
-    
-    Args:
-        params: Parameters to optimize
-        learning_rate (or lr): Learning rate
-        momentum: Momentum coefficient (default: 0.9)
-    """
-    
     def __init__(self, params, learning_rate=0.01, momentum=0.9, lr=None):
         super().__init__(params)
         self.learning_rate = lr if lr is not None else learning_rate
@@ -58,14 +49,18 @@ class Momentum(Optimizer):
         self.velocity = [np.zeros_like(p.data) for p in params]
     
     def step(self):
-        """Update parameters using Momentum"""
+        """Update parameters using PyTorch-style Momentum"""
         for param, velocity in zip(self.params, self.velocity):
             if param.requires_grad and param.grad is not None:
-                # Update velocity
-                velocity[:] = self.momentum * velocity - self.learning_rate * param.grad
+                # Update velocity (accumulation of gradients)
+                velocity[:] = self.momentum * velocity + param.grad
+                # Remark: The velocity variable stores a history of gradients scaled by the previous (larger) learning rate.
+                # When the scheduler drops the learning rate (e.g., from 0.001 to 0.0005), the "inertia" from the previous velocity
+                # is still huge. The optimizer effectively ignores the new, smaller learning rate for several steps,
+                # causing the model to overshoot and the loss to explode
                 
-                # Update parameter
-                param.data += velocity
+                # Apply update scaled by learning rate
+                param.data -= self.learning_rate * velocity
 
 
 class Adagrad(Optimizer):
