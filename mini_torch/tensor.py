@@ -113,10 +113,21 @@ class Tensor:
         def _backward():
             if self.requires_grad:
                 # gradient w.r.t. self: grad @ other.T
-                self.grad += out.grad @ other.data.swapaxes(-2, -1)
+                grad_self = out.grad @ other.data.swapaxes(-2, -1)
+                # Handle dimension mismatch by summing over extra dims
+                # We needed this for the attention model
+                while grad_self.ndim > self.grad.ndim:
+                    grad_self = grad_self.sum(axis=0)
+                self.grad += grad_self
+                
             if other.requires_grad:
                 # gradient w.r.t. other: self.T @ grad
-                other.grad += self.data.swapaxes(-2, -1) @ out.grad
+                grad_other = self.data.swapaxes(-2, -1) @ out.grad
+                # Handle dimension mismatch by summing over batch dimensions
+                # Same here, needed for attention model
+                while grad_other.ndim > other.grad.ndim:
+                    grad_other = grad_other.sum(axis=0)
+                other.grad += grad_other
 
         out._backward = _backward
         return out
